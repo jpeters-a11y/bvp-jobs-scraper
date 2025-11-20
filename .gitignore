@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+bvp_env/
+venv/
+ENV/
+env/
+.venv
+
+# Data files
+*.csv
+*.xlsx
+*.xls
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (keep your token safe!)
+.env
+config.ini
+secrets.txt
+
+# Logs
+*.log

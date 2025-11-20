@@ -1,0 +1,42 @@
+name: BVP Jobs Scraper - Weekly Run
+
+on:
+  schedule:
+    # Runs every Monday at 9:00 AM EST (14:00 UTC)
+    - cron: '0 14 * * 1'
+  
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  scrape-and-update:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests pandas pyairtable
+    
+    - name: Run BVP jobs scraper
+      run: python bvp_jobs_analyzer.py
+    
+    - name: Load data to Airtable
+      env:
+        AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+      run: python load_jobs_to_airtable.py
+    
+    - name: Upload CSV as artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: jobs-data-${{ github.run_number }}
+        path: bvp_jobs_analysis.csv
+        retention-days: 30
