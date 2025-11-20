@@ -4,6 +4,23 @@ import time
 from collections import Counter
 import pandas as pd
 import re
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+def create_session_with_retries():
+    """Create a requests session with retry logic"""
+    session = requests.Session()
+    retry = Retry(
+        total=5,
+        read=5,
+        connect=5,
+        backoff_factor=1,
+        status_forcelist=(500, 502, 504)
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
 
 def infer_function_from_title(title):
     """Infer function/department from job title when not provided"""
@@ -113,11 +130,15 @@ def infer_function_from_title(title):
     return "Unknown"
 
 def fetch_all_bvp_jobs():
-    """Fetch all jobs from BVP job board using pagination"""
+    """Fetch all jobs from BVP job board using pagination with retry logic"""
     url = "https://jobs.bvp.com/api-boards/search-jobs"
     all_jobs = []
     sequence = None
     page = 1
+    max_retries = 3
+    
+    # Create session with retry logic
+    session = create_session_with_retries()
     
     while True:
         payload = {
@@ -138,37 +159,57 @@ def fetch_all_bvp_jobs():
             payload["meta"]["sequence"] = sequence
         
         print(f"Fetching page {page}...")
-        response = requests.post(url, json=payload)
         
-        if response.status_code != 200:
-            print(f"Error: {response.status_code}")
-            break
-        
-        data = response.json()
-        
-        if "jobs" in data:
-            jobs_data = data["jobs"]
-            if isinstance(jobs_data, list):
-                all_jobs.extend(jobs_data)
-        
-        print(f"  Fetched {len(all_jobs)} jobs so far (Total: {data.get('total', 'unknown')})")
-        
-        total = data.get('total', 0)
-        if len(all_jobs) >= total:
-            print(f"  Reached total! Stopping.")
-            break
-        
-        if "meta" in data and "sequence" in data["meta"]:
-            new_sequence = data["meta"]["sequence"]
-            if new_sequence == sequence:
-                print(f"  Sequence didn't change, stopping")
-                break
-            sequence = new_sequence
-            page += 1
-            time.sleep(0.5)
-        else:
-            print(f"  No sequence found, stopping")
-            break
+        # Try the request with retries
+        for attempt in range(max_retries):
+            try:
+                response = session.post(url, json=payload, timeout=30)
+                
+                if response.status_code != 200:
+                    print(f"Error: {response.status_code}")
+                    if attempt < max_retries - 1:
+                        print(f"  Retrying... (attempt {attempt + 2}/{max_retries})")
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                    else:
+                        break
+                
+                data = response.json()
+                
+                if "jobs" in data:
+                    jobs_data = data["jobs"]
+                    if isinstance(jobs_data, list):
+                        all_jobs.extend(jobs_data)
+                
+                print(f"  Fetched {len(all_jobs)} jobs so far (Total: {data.get('total', 'unknown')})")
+                
+                total = data.get('total', 0)
+                if len(all_jobs) >= total:
+                    print(f"  Reached total! Stopping.")
+                    return all_jobs
+                
+                if "meta" in data and "sequence" in data["meta"]:
+                    new_sequence = data["meta"]["sequence"]
+                    if new_sequence == sequence:
+                        print(f"  Sequence didn't change, stopping")
+                        return all_jobs
+                    sequence = new_sequence
+                    page += 1
+                    time.sleep(1)  # Increased delay to be nicer to the API
+                    break  # Success, exit retry loop
+                else:
+                    print(f"  No sequence found, stopping")
+                    return all_jobs
+                    
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                print(f"  Connection error: {e}")
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt
+                    print(f"  Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"  Max retries reached. Continuing with {len(all_jobs)} jobs fetched so far.")
+                    return all_jobs
     
     return all_jobs
 
