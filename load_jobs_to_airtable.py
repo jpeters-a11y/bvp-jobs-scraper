@@ -19,8 +19,9 @@ FUNCTION_ANALYTICS_TABLE = 'tbl3ofnnggrF39E2A'
 WEEKLY_SNAPSHOTS_TABLE = 'tbl24qL4zM3cZ9QDr'
 TALENT_POOLING_TABLE = 'tblnIBdiR7P5mmUn7'
 
-# Mapping of all function values to Airtable's predefined categories
+# Comprehensive mapping of all function values to Airtable's predefined categories
 FUNCTION_MAPPING = {
+    # Main categories (identity mapping)
     'Engineering': 'Engineering',
     'Sales': 'Sales',
     'Marketing': 'Marketing',
@@ -35,43 +36,66 @@ FUNCTION_MAPPING = {
     'IT': 'IT',
     'Strategy & Business Development': 'Strategy & Business Development',
     'Professional Services': 'Professional Services',
+    'Unknown': 'Unknown',
     
-    # Map variations to main categories
+    # Product variations
     'Product & Design': 'Product',
     'Product Management': 'Product',
     'Product Development': 'Product',
-    'Strategy & BD': 'Strategy & Business Development',
+    'Product Development ': 'Product',
+    'Product Management, Support, & Operations': 'Product',
+    
+    # Sales variations  
     'Commercial': 'Sales',
     'Go-To-Market': 'Sales',
     'Sales SMB': 'Sales',
     'Account Executives': 'Sales',
+    'APAC': 'Sales',
+    
+    # Marketing variations
     'Marketing Operations': 'Marketing',
     'Growth': 'Marketing',
+    'Marketing ': 'Marketing',
+    
+    # Engineering variations
+    'Development': 'Engineering',
+    'AI Research & Engineering': 'Engineering',
+    'Technical Program Management': 'Engineering',
+    'Technical Program Management ': 'Engineering',
+    
+    # Data variations
     'Data': 'Data & Analytics',
+    'Ops Analytics': 'Data & Analytics',
+    
+    # Operations variations
     'Clinical Operations': 'Operations',
-    'Partnerships': 'Strategy & Business Development',
-    'People Operations': 'People & Talent',
-    'Technology': 'IT',
-    'Compliance': 'Legal & Compliance',
-    'Talent': 'People & Talent',
-    'Client Impact': 'Customer Success',
     'Supply Success': 'Operations',
     'Precision': 'Operations',
-    'Ops Analytics': 'Data & Analytics',
-    'Development': 'Engineering',
-    'Product Development ': 'Product',
-    'AI Research & Engineering': 'Engineering',
-    'Product Management, Support, & Operations': 'Product',
-    'Technical Program Management ': 'Engineering',
-    'Technical Program Management': 'Engineering',
+    
+    # Customer Success variations
+    'Client Impact': 'Customer Success',
     'Customer Experience': 'Customer Success',
     'Customer Success & Solutions': 'Customer Success',
-    'Marketing ': 'Marketing',
-    'APAC': 'Sales',
+    
+    # People variations
+    'People Operations': 'People & Talent',
+    'Talent': 'People & Talent',
+    
+    # Strategy variations
+    'Strategy & BD': 'Strategy & Business Development',
+    'Partnerships': 'Strategy & Business Development',
+    
+    # IT variations
+    'Technology': 'IT',
+    
+    # Legal variations  
+    'Compliance': 'Legal & Compliance',
+    
+    # Professional Services variations
     'Global PSF': 'Professional Services',
     
-    # Everything else
-    'Unknown': 'Unknown'
+    # Company-specific departments that should be Unknown
+    'Crete Professionals Alliance': 'Unknown',
 }
 
 def normalize_function(func):
