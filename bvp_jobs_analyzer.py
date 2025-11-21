@@ -29,11 +29,35 @@ def infer_function_from_title(title):
     
     title_lower = title.lower()
     
+    # Finance & Accounting (check early to avoid conflicts with "operations")
+    if any(word in title_lower for word in [
+        'fp&a', 'fpa', 'finance', 'accounting', 'accountant', 'controller', 'cfo',
+        'financial', 'tax', 'audit', 'payroll', 'bookkeeper', 'accounts payable',
+        'accounts receivable', 'treasury'
+    ]):
+        return "Finance"
+    
+    # Legal & Compliance (check early)
+    if any(word in title_lower for word in [
+        'legal', 'counsel', 'attorney', 'compliance', 'regulatory',
+        'privacy', 'contracts', 'grc', 'governance'
+    ]):
+        return "Legal & Compliance"
+    
+    # People/HR (check before Operations to catch "People Operations")
+    if any(word in title_lower for word in [
+        'recruiter', 'recruiting', 'talent acquisition', 'talent', 'people business partner',
+        'people partner', 'people enablement', 'hr ', 'hrbp', 'human resources',
+        'total rewards', 'people operations', 'people analytics', 'people experience'
+    ]):
+        return "People & Talent"
+    
     # Engineering & Technical
     if any(word in title_lower for word in [
         'engineer', 'developer', 'software', 'sre', 'devops', 'architect', 
         'infrastructure', 'backend', 'frontend', 'fullstack', 'full stack',
-        'mobile', 'ios', 'android', 'qa', 'sdet', 'technical program'
+        'mobile', 'ios', 'android', 'qa', 'sdet', 'technical program', 'firmware',
+        'embedded', 'hardware engineer', 'test engineer'
     ]):
         return "Engineering"
     
@@ -41,23 +65,30 @@ def infer_function_from_title(title):
     if any(word in title_lower for word in [
         'account executive', 'sales', 'business development', 'bdr', 'sdr',
         'account manager', 'account director', 'partnership manager',
-        'sales development', 'revenue', 'commercial'
+        'sales development', 'revenue', 'commercial', 'inside sales',
+        'enterprise sales', 'gtm manager', 'relationship manager', 'key account'
     ]):
         return "Sales"
     
-    # Marketing
+    # Marketing (check before Operations)
     if any(word in title_lower for word in [
         'marketing', 'growth marketing', 'demand gen', 'content', 'seo',
-        'brand', 'campaigns', 'lifecycle marketing', 'product marketing'
+        'brand', 'campaigns', 'lifecycle marketing', 'product marketing',
+        'growth marketer', 'social media', 'communications', 'public affairs',
+        'community manager'
     ]):
         return "Marketing"
     
     # Product Management
     if any(word in title_lower for word in [
-        'product manager', 'product lead', 'product owner', 'pm ',
-        'product operations', 'product strategy', 'product director'
+        'product manager', 'product lead', 'product owner',
+        'product director', 'product analyst', 'product designer'
     ]):
-        return "Product"
+        # Exclude "product support" and "product operations"
+        if 'support' in title_lower or 'operations' in title_lower:
+            pass  # Will be caught by other categories
+        else:
+            return "Product"
     
     # Design
     if any(word in title_lower for word in [
@@ -68,58 +99,44 @@ def infer_function_from_title(title):
     # Data & Analytics
     if any(word in title_lower for word in [
         'data scientist', 'data analyst', 'data engineer', 'analytics',
-        'machine learning', 'ml engineer', 'ai researcher', 'data science'
+        'machine learning', 'ml engineer', 'ai researcher', 'data science',
+        'data specialist', 'data platform'
     ]):
         return "Data & Analytics"
     
-    # Customer Success & Support
+    # Customer Success & Support (check before Operations)
     if any(word in title_lower for word in [
         'customer success', 'customer experience', 'customer support',
-        'technical support', 'solutions engineer', 'implementation'
+        'technical support', 'implementation manager', 'customer care',
+        'customer architect', 'customer education', 'support specialist',
+        'support engineer', 'customer strategy'
     ]):
         return "Customer Success"
     
-    # Operations
-    if any(word in title_lower for word in [
-        'operations', 'ops ', 'office manager', 'business operations',
-        'program manager', 'project manager'
-    ]):
-        return "Operations"
-    
-    # People/HR
-    if any(word in title_lower for word in [
-        'recruiter', 'recruiting', 'talent', 'people', 'hr ', 'human resources',
-        'total rewards', 'people operations', 'people analytics'
-    ]):
-        return "People & Talent"
-    
-    # Finance & Accounting
-    if any(word in title_lower for word in [
-        'finance', 'accounting', 'accountant', 'controller', 'cfo',
-        'financial', 'tax', 'audit', 'corporate development'
-    ]):
-        return "Finance"
-    
-    # Legal & Compliance
-    if any(word in title_lower for word in [
-        'legal', 'counsel', 'attorney', 'compliance', 'regulatory',
-        'privacy', 'contracts'
-    ]):
-        return "Legal & Compliance"
-    
     # IT & Systems
     if any(word in title_lower for word in [
-        'it support', 'it engineer', 'systems admin', 'helpdesk',
-        'desktop support'
+        'it support', 'it engineer', 'it administrator', 'it specialist',
+        'systems admin', 'helpdesk', 'desktop support', 'salesforce admin',
+        'it governance', 'it planning', 'it cloud', 'service desk'
     ]):
         return "IT"
     
-    # Strategy & Business Development
+    # Strategy & Business Development (check before Operations)
     if any(word in title_lower for word in [
         'strategy', 'strategic', 'business development', 'partnerships',
-        'corp dev', 'corporate development'
+        'corp dev', 'corporate development', 'chief of staff'
     ]):
         return "Strategy & Business Development"
+    
+    # Operations (check last as it's broad)
+    if any(word in title_lower for word in [
+        'operations', 'ops manager', 'ops specialist', 'ops generalist',
+        'office manager', 'business operations', 'program manager',
+        'project manager', 'executive assistant', 'admin', 'procurement',
+        'process', 'implementation specialist', 'solutions operations',
+        'gtm operations', 'product operations', 'fraud analyst'
+    ]):
+        return "Operations"
     
     # Professional Services
     if any(word in title_lower for word in [
