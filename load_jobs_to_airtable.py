@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from bvp_jobs_analyzer import infer_function_from_title
 
 BASE_ID = 'appKRyK4KfiGX9ojv'
-PERSONAL_ACCESS_TOKEN = 'patkRbMdDQXMQ11CZ.5eebdf0a940e5461a9926f84fe530478d2b367c5474534dc75a633a8ed4b6f32'
+PERSONAL_ACCESS_TOKEN = os.environ.get('AIRTABLE_TOKEN', 'YOUR_AIRTABLE_PERSONAL_ACCESS_TOKEN')
 JOBS_TABLE = 'tblHHC9JcSHscBn6S'
 
 VALID = {'Engineering', 'Sales', 'Marketing', 'Product', 'Design', 'Data & Analytics',
