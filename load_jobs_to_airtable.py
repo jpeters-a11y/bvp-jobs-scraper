@@ -247,7 +247,8 @@ else:
     print("\n✅ All non-Unknown values successfully mapped!")
 
 print("\n" + "="*60)
-input("Press Enter to upload to Airtable (Ctrl+C to cancel)...")
+print("Starting upload to Airtable...")
+print("="*60)
 
 api = Api(PERSONAL_ACCESS_TOKEN)
 jobs_table = api.table(BASE_ID, JOBS_TABLE)
