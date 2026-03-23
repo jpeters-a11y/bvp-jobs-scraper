@@ -557,7 +557,7 @@ def update_talent_pooling(df, api):
         cluster_label = f"{level} {func}"
 
         clusters.append({
-            'Job Title': cluster_label,
+            'Role Cluster': cluster_label,
             'Number of Companies': int(n_companies),
             'Total Openings': int(total_openings),
             'Companies': ', '.join(companies),
