@@ -1,5 +1,6 @@
 import pandas as pd
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 import time
 import os
 from pyairtable import Api
@@ -19,12 +20,99 @@ FUNCTION_ANALYTICS_TABLE = 'tbl3ofnnggrF39E2A'
 WEEKLY_SNAPSHOTS_TABLE = 'tbl24qL4zM3cZ9QDr'
 TALENT_POOLING_TABLE = 'tblnIBdiR7P5mmUn7'
 
-VALID = {'Engineering', 'Sales', 'Marketing', 'Product', 'Design', 'Data & Analytics',
-         'Customer Success', 'Operations', 'People & Talent', 'Finance',
-         'Legal & Compliance', 'IT', 'Strategy & Business Development',
-         'Professional Services', 'Unknown'}
+# ── FILTERING CONFIGURATION ────────────────────────────────
+# Companies to exclude entirely (too many irrelevant local-market roles)
+EXCLUDED_COMPANIES = {
+    'Toss',
+}
 
-# COMPLETE systematic mapping of all 407 department variations
+# Regex: CJK + Korean Hangul/Jamo character ranges
+NON_LATIN_RE = re.compile(
+    r'[\u3000-\u9FFF\uAC00-\uD7AF\u1100-\u11FF\uA960-\uA97F\uD7B0-\uD7FF]'
+)
+
+def is_non_english_title(title):
+    """True if >50% of alphabetic chars are non-Latin (CJK/Korean)."""
+    if not isinstance(title, str):
+        return False
+    non_latin = len(NON_LATIN_RE.findall(title))
+    alpha = sum(1 for c in title if c.isalpha())
+    if alpha == 0:
+        return True
+    return non_latin / alpha > 0.5
+
+def is_test_job(title):
+    """True if title looks like a test/placeholder posting."""
+    if not isinstance(title, str):
+        return False
+    lower = title.lower()
+    return '[test]' in lower or 'test job' in lower or 'test department' in lower
+
+
+# ── BVP ROADMAP MAPPING ────────────────────────────────────
+# Maps portfolio company names → BVP investing roadmap.
+# Sourced from IR <> Talent Sync (Talent Portal Internal).
+ROADMAP_MAP = {
+    # AI
+    'Anthropic': 'AI', 'Perplexity AI': 'AI', 'DeepL': 'AI',
+    'Fal': 'AI', 'Writer': 'AI', 'Typeface': 'AI',
+    'Jasper': 'AI', 'Harvey': 'AI', 'Sierra': 'AI',
+    # Robotics
+    'Waymo': 'Robotics', 'Halter': 'Robotics', 'Auterion': 'Robotics',
+    # Cybersecurity
+    'Team8': 'Cybersecurity', 'Upwind Security': 'Cybersecurity',
+    'Torq': 'Cybersecurity', 'BigID': 'Cybersecurity',
+    'Axonius': 'Cybersecurity', 'Claroty': 'Cybersecurity',
+    'Doppel': 'Cybersecurity', 'Forter': 'Cybersecurity',
+    'Teleport': 'Cybersecurity',
+    # Horizontal SaaS
+    'Canva': 'Horizontal SaaS', 'Intercom': 'Horizontal SaaS',
+    'Hibob': 'Horizontal SaaS', 'Yotpo': 'Horizontal SaaS',
+    'Pocus': 'Horizontal SaaS', 'Papaya Global': 'Horizontal SaaS',
+    'ManyChat': 'Horizontal SaaS', 'Vertice': 'Horizontal SaaS',
+    # Vertical SaaS
+    'MaintainX': 'Vertical SaaS', 'Legora': 'Vertical SaaS',
+    'EliseAI': 'Vertical SaaS', 'EvenUp': 'Vertical SaaS',
+    'Fieldguide': 'Vertical SaaS', 'Restaurant365': 'Vertical SaaS',
+    'Shopmonkey': 'Vertical SaaS', 'brightwheel': 'Vertical SaaS',
+    'DroneDeploy': 'Vertical SaaS', 'Aiwyn': 'Vertical SaaS',
+    'Unframe AI': 'Vertical SaaS', 'Curri': 'Vertical SaaS',
+    # Fintech
+    'Ramp': 'Fintech', 'TRM Labs': 'Fintech', 'Mambu': 'Fintech',
+    'Betterment': 'Fintech', 'Melio': 'Fintech', 'Thunes': 'Fintech',
+    'Easebuzz': 'Fintech', 'Farther': 'Fintech',
+    'CaptivateIQ': 'Fintech', 'Pave': 'Fintech',
+    'Crete Professionals Alliance': 'Fintech',
+    'Carr, Riggs & Ingram': 'Fintech',
+    # Data / Cloud Infrastructure
+    'ClickHouse': 'Data / Cloud Infrastructure',
+    'DRIVENETS': 'Data / Cloud Infrastructure',
+    # Developer Platforms
+    'LaunchDarkly': 'Developer Platforms',
+    'Cloudinary': 'Developer Platforms',
+    'Port IO': 'Developer Platforms',
+    # Healthcare
+    'Abridge': 'Healthcare', 'Groups Recover Together': 'Healthcare',
+    'MediBuddy': 'Healthcare', 'Qventus': 'Healthcare',
+    # Consumer
+    'Discord': 'Consumer', 'Cambly': 'Consumer',
+    'Klook': 'Consumer', 'Livspace': 'Consumer',
+    # Marketplaces
+    'carwow': 'Marketplaces', 'GLG': 'Marketplaces',
+    # Deep Tech
+    'The Exploration Company': 'Deep Tech',
+    'Sila Nanotechnologies': 'Deep Tech',
+}
+
+
+# ── FUNCTION NORMALIZATION ──────────────────────────────────
+VALID = {
+    'Engineering', 'Sales', 'Marketing', 'Product', 'Design',
+    'Data & Analytics', 'Customer Success', 'Operations',
+    'People & Talent', 'Finance', 'Legal & Compliance', 'IT',
+    'Strategy & Business Development', 'Professional Services', 'Unknown'
+}
+
 MAPPING = {
     # PRODUCT
     'Product Management': 'Product', 'Product Engineering': 'Product',
@@ -34,7 +122,6 @@ MAPPING = {
     'Product Development & Design': 'Product', 'Enterprise Product': 'Product',
     'Product Experience': 'Product', 'Product, Research, and UI/UX': 'Product',
     'Product Development ': 'Product',
-
     # ENGINEERING
     'AI Research & Engineering': 'Engineering', 'Security': 'Engineering',
     'R&D': 'Engineering', 'AI': 'Engineering', 'AI Group': 'Engineering',
@@ -67,7 +154,6 @@ MAPPING = {
     'MAIT': 'Engineering', 'Deployed': 'Engineering', 'Security ': 'Engineering',
     'Technology - Software Engineering, Infrastructure, and Security': 'Engineering',
     'Infrastructure and Security': 'Engineering', 'Flight Computing': 'Engineering',
-
     # SALES
     'Go-To-Market': 'Sales', 'Commercial': 'Sales', 'Account Executives': 'Sales',
     'APAC': 'Sales', 'Mexico': 'Sales', 'Go To Market (GTM)': 'Sales',
@@ -84,7 +170,6 @@ MAPPING = {
     'Sales Enterprise': 'Sales', 'Strategic Sales': 'Sales',
     'Sales - Sales Engineering': 'Sales', 'Alliances and Growth': 'Sales',
     'CEMI BD & Sales': 'Sales', 'Global FS': 'Sales',
-
     # CUSTOMER SUCCESS
     'Customer Experience': 'Customer Success', 'Customer Support': 'Customer Success',
     'Customer Success & Solutions': 'Customer Success', 'Customer': 'Customer Success',
@@ -109,7 +194,6 @@ MAPPING = {
     'Partner Success': 'Customer Success', 'Technical Account Management': 'Customer Success',
     'Solutions Engineering ': 'Customer Success', 'SMB & Customer Success': 'Customer Success',
     'Advisor Onboarding': 'Customer Success',
-
     # MARKETING
     'Marketing ': 'Marketing', 'Growth': 'Marketing', 'Marketing Org': 'Marketing',
     'Communications & Brand': 'Marketing', 'Product Marketing': 'Marketing',
@@ -120,7 +204,6 @@ MAPPING = {
     'Demand Generation': 'Marketing', 'Advertising': 'Marketing',
     'Social Gaming + Developer Experience': 'Marketing', 'Artists & Curation': 'Marketing',
     'Brand Design': 'Marketing', 'Creatives Studio': 'Marketing',
-
     # DATA & ANALYTICS
     'Data': 'Data & Analytics', 'Data Science': 'Data & Analytics',
     'Data & Analytics Org': 'Data & Analytics', 'Data Science & Engineering': 'Data & Analytics',
@@ -132,7 +215,6 @@ MAPPING = {
     'Data Science & Analytics': 'Data & Analytics', 'Defcon AI': 'Data & Analytics',
     'Data / AI': 'Data & Analytics', 'Ops Analytics ': 'Data & Analytics',
     'Science': 'Data & Analytics', 'Druid Query': 'Data & Analytics',
-
     # OPERATIONS
     'Clinical': 'Operations', 'Clinical Operations': 'Operations',
     'G&A': 'Operations', 'Revenue Operations': 'Operations',
@@ -161,10 +243,10 @@ MAPPING = {
     'Program': 'Operations', 'Safeguards (Trust & Safety) ': 'Operations',
     'Trust & Safety': 'Operations', 'Abuse Protection': 'Operations',
     'Pre-Litigation': 'Operations', 'Risk & Compliance': 'Operations',
-    'Risk': 'Operations', 'Compliance': 'Operations', 'Corporate Office | 0700': 'Operations',
+    'Risk': 'Operations', 'Compliance': 'Operations',
+    'Corporate Office | 0700': 'Operations',
     'FCRM - Compliance | 0220': 'Operations', 'Adeptus': 'Operations',
     'Strategy, Operations & Data': 'Operations',
-
     # PEOPLE & TALENT
     'People': 'People & Talent', 'Talent': 'People & Talent',
     'Talent Acquisition': 'People & Talent', 'Recruiting': 'People & Talent',
@@ -174,7 +256,6 @@ MAPPING = {
     'People Business Partnering': 'People & Talent', 'Human Resources': 'People & Talent',
     'People Ops & Talent': 'People & Talent', 'HR & People': 'People & Talent',
     'Talent Development': 'People & Talent', 'People & Performance': 'People & Talent',
-
     # FINANCE
     'Accounting': 'Finance', 'Finance ': 'Finance', 'FP&A': 'Finance',
     'Finance Org': 'Finance', 'Finance & IT': 'Finance',
@@ -191,7 +272,6 @@ MAPPING = {
     'Financial Advice': 'Finance', 'Financial Institutions Team': 'Finance',
     'Wholesale Benefits Team': 'Finance', 'Retirement Services Team': 'Finance',
     'Private Client Services Team': 'Finance', 'Finance & Legal': 'Finance',
-
     # STRATEGY
     'Strategy & BD': 'Strategy & Business Development',
     'Partnerships': 'Strategy & Business Development',
@@ -199,23 +279,19 @@ MAPPING = {
     'Strategy': 'Strategy & Business Development',
     'Corporate & Business Development Strategy': 'Strategy & Business Development',
     'Strategy & Org': 'Strategy & Business Development',
-
     # LEGAL
     'Legal': 'Legal & Compliance', 'Legal ': 'Legal & Compliance',
     'Legal Counsel': 'Legal & Compliance', 'Legal - Product': 'Legal & Compliance',
     'Global Law': 'Legal & Compliance', 'Policy': 'Legal & Compliance',
     'AI Policy & Societal Impacts': 'Legal & Compliance',
-
     # IT
     'Technology': 'IT', 'Technology ': 'IT', 'AIOA': 'IT',
     'FCRM - Data Tech | 0240': 'IT', 'Corporate Technology': 'IT',
     'Business Systems': 'IT', 'Business Technologies': 'IT',
     'Enterprise Cloud Applications': 'IT',
-
     # PROFESSIONAL SERVICES
     'Global PSF': 'Professional Services',
     'Product Management, Support, & Operations': 'Professional Services',
-
     # DESIGN
     'UX Design': 'Design', 'UX': 'Design', 'Design ': 'Design',
     'Creative': 'Design', 'Content Design': 'Design',
@@ -223,43 +299,50 @@ MAPPING = {
 
 
 def normalize(func):
-    """Normalize function name using mapping, return None if unmapped."""
     if func in VALID:
         return func
     mapped = MAPPING.get(func)
     if mapped:
         return mapped
-    return None  # Signal that we need to infer from title
+    return None
 
 
 def clear_table(table):
-    """Delete all records from a table."""
     existing = table.all()
     if existing:
-        batch_ids = [r['id'] for r in existing]
-        for i in range(0, len(batch_ids), 10):
-            table.batch_delete(batch_ids[i:i+10])
+        ids = [r['id'] for r in existing]
+        for i in range(0, len(ids), 10):
+            table.batch_delete(ids[i:i + 10])
             time.sleep(0.2)
     return len(existing)
 
 
+def get_previous_company_totals(api):
+    """Read current Company Analytics to capture last week's job counts."""
+    table = api.table(BASE_ID, COMPANY_ANALYTICS_TABLE)
+    records = table.all()
+    return {
+        r['fields'].get('Company Name', ''): r['fields'].get('Total Jobs', 0)
+        for r in records if r['fields'].get('Company Name')
+    }
+
+
+# ── PIPELINE STEPS ──────────────────────────────────────────
+
 def upload_jobs(df, api):
-    """Clear and re-upload all jobs to the Jobs table."""
     print("\n" + "=" * 60)
     print("STEP 1: Upload Jobs")
     print("=" * 60)
 
-    jobs_table = api.table(BASE_ID, JOBS_TABLE)
-
-    print("Clearing existing records...")
-    cleared = clear_table(jobs_table)
+    table = api.table(BASE_ID, JOBS_TABLE)
+    cleared = clear_table(table)
     print(f"  Cleared {cleared} old records")
 
     print(f"Uploading {len(df)} jobs...")
     total_batches = (len(df) + 9) // 10
     for i in range(0, len(df), 10):
         records = []
-        for _, row in df.iloc[i:i+10].iterrows():
+        for _, row in df.iloc[i:i + 10].iterrows():
             records.append({
                 'Job Title': str(row['Title']),
                 'Company': str(row['Company']),
@@ -268,9 +351,9 @@ def upload_jobs(df, api):
                 'Location': str(row['Location']),
                 'Remote': str(row['Remote']),
                 'URL': str(row['URL']) if pd.notna(row['URL']) else '',
-                'Last Updated': datetime.now().isoformat()
+                'Last Updated': datetime.now(timezone.utc).isoformat()
             })
-        jobs_table.batch_create(records)
+        table.batch_create(records)
         batch_num = i // 10 + 1
         if batch_num % 100 == 0:
             print(f"  Batch {batch_num}/{total_batches}")
@@ -280,7 +363,6 @@ def upload_jobs(df, api):
 
 
 def update_function_analytics(df, api):
-    """Clear and recreate function analytics."""
     print("\n" + "=" * 60)
     print("STEP 2: Function Analytics")
     print("=" * 60)
@@ -290,10 +372,8 @@ def update_function_analytics(df, api):
     print(f"  Cleared {cleared} old records")
 
     total_jobs = len(df)
-    func_groups = df.groupby('Fixed')
-
     records = []
-    for func_name, group in func_groups:
+    for func_name, group in df.groupby('Fixed'):
         remote_count = len(group[group['Remote'] == 'Yes'])
         records.append({
             'Function': str(func_name),
@@ -304,79 +384,101 @@ def update_function_analytics(df, api):
             'Companies Hiring': int(group['Company'].nunique()),
             'Executive Roles': int(len(group[group['Level'] == 'Executive'])),
             'Senior Roles': int(len(group[group['Level'] == 'Senior'])),
-            'Last Updated': datetime.now().isoformat()
+            'Last Updated': datetime.now(timezone.utc).isoformat()
         })
 
-    # Upload in batches of 10
     for i in range(0, len(records), 10):
-        table.batch_create(records[i:i+10])
+        table.batch_create(records[i:i + 10])
         time.sleep(0.2)
-
     print(f"✅ Created {len(records)} function analytics records")
 
 
-def update_company_analytics(df, api):
-    """Clear and recreate company analytics (top 50 by job count)."""
+def update_company_analytics(df, api, prev_totals):
     print("\n" + "=" * 60)
-    print("STEP 3: Company Analytics")
+    print("STEP 3: Company Analytics (with Roadmap + Velocity)")
     print("=" * 60)
 
     table = api.table(BASE_ID, COMPANY_ANALYTICS_TABLE)
     cleared = clear_table(table)
     print(f"  Cleared {cleared} old records")
 
-    company_groups = df.groupby('Company')
-    company_stats = []
-
-    for company, group in company_groups:
+    stats = []
+    for company, group in df.groupby('Company'):
         remote_count = len(group[group['Remote'] == 'Yes'])
-        company_stats.append({
+        total = len(group)
+        prev = prev_totals.get(company)
+
+        stats.append({
             'company': str(company),
-            'total': len(group),
-            'engineering': int(len(group[group['Fixed'] == 'Engineering'])),
+            'total': total,
+            'eng': int(len(group[group['Fixed'] == 'Engineering'])),
             'sales': int(len(group[group['Fixed'] == 'Sales'])),
-            'marketing': int(len(group[group['Fixed'] == 'Marketing'])),
-            'product': int(len(group[group['Fixed'] == 'Product'])),
-            'remote_pct': remote_count / len(group) if len(group) > 0 else 0,
-            'unique_functions': int(group['Fixed'].nunique()),
+            'mktg': int(len(group[group['Fixed'] == 'Marketing'])),
+            'prod': int(len(group[group['Fixed'] == 'Product'])),
+            'remote_pct': remote_count / total if total > 0 else 0,
+            'funcs': int(group['Fixed'].nunique()),
+            'roadmap': ROADMAP_MAP.get(company, ''),
+            'prev': prev,
+            'wow': total - prev if prev is not None else None,
         })
 
-    # Sort by total jobs descending, take top 50
-    company_stats.sort(key=lambda x: x['total'], reverse=True)
-    top_50 = company_stats[:50]
+    stats.sort(key=lambda x: x['total'], reverse=True)
+    top_50 = stats[:50]
 
     records = []
-    for cs in top_50:
-        records.append({
-            'Company Name': cs['company'],
-            'Total Jobs': int(cs['total']),
-            'Engineering Jobs': cs['engineering'],
-            'Sales Jobs': cs['sales'],
-            'Marketing Jobs': cs['marketing'],
-            'Product Jobs': cs['product'],
-            'Remote Percentage': cs['remote_pct'],
-            'Unique Functions': cs['unique_functions'],
-            'Last Updated': datetime.now().isoformat()
-        })
+    for s in top_50:
+        rec = {
+            'Company Name': s['company'],
+            'Total Jobs': int(s['total']),
+            'Engineering Jobs': s['eng'],
+            'Sales Jobs': s['sales'],
+            'Marketing Jobs': s['mktg'],
+            'Product Jobs': s['prod'],
+            'Remote Percentage': s['remote_pct'],
+            'Unique Functions': s['funcs'],
+            'Last Updated': datetime.now(timezone.utc).isoformat(),
+        }
+        if s['roadmap']:
+            rec['BVP Roadmap'] = s['roadmap']
+        if s['prev'] is not None:
+            rec['Previous Week Jobs'] = int(s['prev'])
+        if s['wow'] is not None:
+            rec['WoW Change'] = int(s['wow'])
+        records.append(rec)
 
     for i in range(0, len(records), 10):
-        table.batch_create(records[i:i+10])
+        table.batch_create(records[i:i + 10])
         time.sleep(0.2)
 
-    print(f"✅ Created {len(records)} company analytics records")
+    # Print velocity highlights
+    movers = [s for s in top_50 if s['wow'] is not None and s['wow'] != 0]
+    movers.sort(key=lambda x: x['wow'], reverse=True)
+    if movers:
+        up = [s for s in movers if s['wow'] > 0]
+        down = [s for s in movers if s['wow'] < 0]
+        if up:
+            print(f"\n  📈 Biggest hiring increases:")
+            for s in up[:5]:
+                print(f"     {s['company']}: +{s['wow']} jobs ({s['prev']} → {s['total']})")
+        if down:
+            print(f"  📉 Biggest hiring decreases:")
+            for s in down[-5:]:
+                print(f"     {s['company']}: {s['wow']} jobs ({s['prev']} → {s['total']})")
+
+    roadmap_count = sum(1 for s in top_50 if s['roadmap'])
+    print(f"\n✅ Created {len(records)} company analytics records ({roadmap_count} with roadmap)")
 
 
 def create_weekly_snapshot(df, api):
-    """Add a new weekly snapshot record (append, don't clear)."""
     print("\n" + "=" * 60)
     print("STEP 4: Weekly Snapshot")
     print("=" * 60)
 
     table = api.table(BASE_ID, WEEKLY_SNAPSHOTS_TABLE)
-
     remote_count = len(df[df['Remote'] == 'Yes'])
+
     snapshot = {
-        'Snapshot Date': datetime.now().strftime('%Y-%m-%d'),
+        'Snapshot Date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
         'Total Jobs': int(len(df)),
         'Total Companies Hiring': int(df['Company'].nunique()),
         'Engineering Jobs': int(len(df[df['Fixed'] == 'Engineering'])),
@@ -389,11 +491,10 @@ def create_weekly_snapshot(df, api):
     }
 
     table.create(snapshot)
-    print(f"✅ Snapshot created for {snapshot['Snapshot Date']}: {snapshot['Total Jobs']} jobs across {snapshot['Total Companies Hiring']} companies")
+    print(f"✅ Snapshot: {snapshot['Snapshot Date']} — {snapshot['Total Jobs']} jobs, {snapshot['Total Companies Hiring']} companies")
 
 
 def update_talent_pooling(df, api):
-    """Clear and recreate talent pooling opportunities."""
     print("\n" + "=" * 60)
     print("STEP 5: Talent Pooling Opportunities")
     print("=" * 60)
@@ -402,56 +503,49 @@ def update_talent_pooling(df, api):
     cleared = clear_table(table)
     print(f"  Cleared {cleared} old records")
 
-    # Group by job title
-    title_groups = df.groupby('Title')
-
     opportunities = []
-    for title, group in title_groups:
+    for title, group in df.groupby('Title'):
         companies = sorted(set(group['Company']))
-        num_companies = len(companies)
+        n = len(companies)
+        if n < 2:
+            continue
 
-        if num_companies >= 2:
-            # Safe mode() extraction
-            func_mode = group['Fixed'].mode()
-            func = str(func_mode.iloc[0]) if len(func_mode) > 0 else 'Unknown'
+        func_mode = group['Fixed'].mode()
+        func = str(func_mode.iloc[0]) if len(func_mode) > 0 else 'Unknown'
+        level_mode = group['Level'].mode()
+        level = str(level_mode.iloc[0]) if len(level_mode) > 0 else 'Unknown'
 
-            level_mode = group['Level'].mode()
-            level = str(level_mode.iloc[0]) if len(level_mode) > 0 else 'Unknown'
+        priority = (
+            'High (5+ companies)' if n >= 5
+            else 'Medium (3-4 companies)' if n >= 3
+            else 'Low (2 companies)'
+        )
 
-            total_openings = int(len(group))
+        opportunities.append({
+            'Job Title': str(title),
+            'Number of Companies': int(n),
+            'Total Openings': int(len(group)),
+            'Companies': ', '.join(companies),
+            'Function': func,
+            'Level': level,
+            'Priority': priority,
+            'Last Updated': datetime.now(timezone.utc).isoformat()
+        })
 
-            if num_companies >= 5:
-                priority = 'High (5+ companies)'
-            elif num_companies >= 3:
-                priority = 'Medium (3-4 companies)'
-            else:
-                priority = 'Low (2 companies)'
-
-            opportunities.append({
-                'Job Title': str(title),
-                'Number of Companies': int(num_companies),
-                'Total Openings': total_openings,
-                'Companies': ', '.join(companies),
-                'Function': func,
-                'Level': level,
-                'Priority': priority,
-                'Last Updated': datetime.now().isoformat()
-            })
-
-    # Sort by number of companies descending
     opportunities.sort(key=lambda x: x['Number of Companies'], reverse=True)
 
-    # Upload in batches
     uploaded = 0
     for i in range(0, len(opportunities), 10):
-        table.batch_create(opportunities[i:i+10])
-        uploaded += len(opportunities[i:i+10])
+        table.batch_create(opportunities[i:i + 10])
+        uploaded += len(opportunities[i:i + 10])
         if (i // 10 + 1) % 50 == 0:
-            print(f"  Uploaded {uploaded}/{len(opportunities)} opportunities...")
+            print(f"  Uploaded {uploaded}/{len(opportunities)}...")
         time.sleep(0.2)
 
     print(f"✅ Created {len(opportunities)} talent pooling opportunities")
 
+
+# ── MAIN ────────────────────────────────────────────────────
 
 def main():
     print("=" * 60)
@@ -464,45 +558,69 @@ def main():
 
     api = Api(PERSONAL_ACCESS_TOKEN)
 
-    # ── Load and normalize CSV ──────────────────────────────
+    # Load CSV
     print("\nLoading CSV data...")
     df = pd.read_csv('bvp_jobs_analysis.csv')
-    print(f"Found {len(df)} jobs ({len(df[df['Function'] == 'Unknown'])} Unknown in CSV)")
+    raw = len(df)
+    print(f"Raw CSV: {raw} jobs")
 
-    # First pass: use mapping
+    # Filter: excluded companies
+    df = df[~df['Company'].isin(EXCLUDED_COMPANIES)]
+    n_co = raw - len(df)
+    print(f"Excluded companies ({', '.join(EXCLUDED_COMPANIES)}): -{n_co}")
+
+    # Filter: non-English titles
+    pre = len(df)
+    df = df[~df['Title'].apply(is_non_english_title)]
+    n_lang = pre - len(df)
+    print(f"Non-English titles: -{n_lang}")
+
+    # Filter: test/junk
+    pre = len(df)
+    df = df[~df['Title'].apply(is_test_job)]
+    n_test = pre - len(df)
+    print(f"Test/junk postings: -{n_test}")
+
+    total_filtered = n_co + n_lang + n_test
+    print(f"\nAfter filtering: {len(df)} jobs ({total_filtered} removed, {total_filtered/raw*100:.1f}%)")
+
+    # Normalize functions
     df['Fixed'] = df['Function'].apply(normalize)
+    needs = df['Fixed'].isna()
+    print(f"Inferring from title for {needs.sum()} unmapped departments...")
+    df.loc[needs, 'Fixed'] = df.loc[needs, 'Title'].apply(infer_function_from_title)
+    unk = len(df[df['Fixed'] == 'Unknown'])
+    print(f"After normalization: {unk} Unknown ({unk/len(df)*100:.1f}%)")
 
-    # Second pass: infer from title for unmapped values
-    needs_inference = df['Fixed'].isna()
-    print(f"Inferring from title for {needs_inference.sum()} unmapped departments...")
-    df.loc[needs_inference, 'Fixed'] = df.loc[needs_inference, 'Title'].apply(infer_function_from_title)
-    print(f"After normalization: {len(df[df['Fixed'] == 'Unknown'])} Unknown ({len(df[df['Fixed'] == 'Unknown'])/len(df)*100:.1f}%)")
-
-    # Show unmapped departments for future mapping improvements
     unmapped = df[(df['Function'] != 'Unknown') & (df['Fixed'] == 'Unknown')]
     if len(unmapped) > 0:
         print(f"\nUnmapped departments ({len(unmapped)} jobs):")
         print(unmapped['Function'].value_counts().head(20))
-    else:
-        print("\n✅ All non-Unknown values successfully mapped!")
 
-    # ── Run full pipeline ───────────────────────────────────
+    # Capture previous week for velocity
+    print("\nCapturing previous company totals for velocity tracking...")
+    prev_totals = get_previous_company_totals(api)
+    print(f"  Found {len(prev_totals)} companies from previous week")
+
+    # Run pipeline
     upload_jobs(df, api)
     update_function_analytics(df, api)
-    update_company_analytics(df, api)
+    update_company_analytics(df, api, prev_totals)
     create_weekly_snapshot(df, api)
     update_talent_pooling(df, api)
 
+    # Summary
+    roadmap_hits = sum(1 for c in df['Company'].unique() if c in ROADMAP_MAP)
     print("\n" + "=" * 60)
     print("✅ ALL TABLES UPDATED SUCCESSFULLY!")
     print("=" * 60)
-    print(f"\nBase URL: https://airtable.com/{BASE_ID}")
-    print(f"\nTables updated:")
-    print(f"  • Jobs - {len(df)} listings")
-    print(f"  • Function Analytics - by function summary")
-    print(f"  • Company Analytics - top 50 companies")
-    print(f"  • Weekly Snapshots - new snapshot added")
-    print(f"  • Talent Pooling - multi-company opportunities")
+    print(f"\n  Base URL: https://airtable.com/{BASE_ID}")
+    print(f"  Raw scraped: {raw}")
+    print(f"  Filtered out: {total_filtered} ({n_co} excluded co, {n_lang} non-English, {n_test} test)")
+    print(f"  Jobs loaded: {len(df)}")
+    print(f"  Unknown: {unk} ({unk/len(df)*100:.1f}%)")
+    print(f"  Companies: {df['Company'].nunique()}")
+    print(f"  Roadmap mapped: {roadmap_hits}/{df['Company'].nunique()}")
 
 
 if __name__ == "__main__":
