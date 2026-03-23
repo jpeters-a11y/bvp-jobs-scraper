@@ -584,7 +584,7 @@ def update_talent_pooling(df, api):
     # Print highlights
     print(f"\n  Top demand clusters:")
     for c in clusters[:10]:
-        print(f"    {c['Job Title']}: {c['Number of Companies']} companies, {c['Total Openings']} openings")
+        print(f"    {c['Role Cluster']}: {c['Number of Companies']} companies, {c['Total Openings']} openings")
 
     print(f"\n✅ Created {len(clusters)} talent pooling clusters")
 
