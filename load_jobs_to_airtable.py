@@ -111,7 +111,8 @@ VALID = {
     'Engineering', 'Sales', 'Marketing', 'Product', 'Design',
     'Data & Analytics', 'Customer Success', 'Operations',
     'People & Talent', 'Finance', 'Legal & Compliance', 'IT',
-    'Strategy & Business Development', 'Professional Services', 'Unknown'
+    'Strategy & Business Development', 'Professional Services',
+    'Clinical', 'Unknown'
 }
 
 MAPPING = {
@@ -217,14 +218,14 @@ MAPPING = {
     'Data / AI': 'Data & Analytics', 'Ops Analytics ': 'Data & Analytics',
     'Science': 'Data & Analytics', 'Druid Query': 'Data & Analytics',
     # OPERATIONS
-    'Clinical': 'Operations', 'Clinical Operations': 'Operations',
+    'Clinical': 'Clinical',
     'G&A': 'Operations', 'Revenue Operations': 'Operations',
     'Business Operations': 'Operations', 'Finance & Business Operations': 'Operations',
     'People Operations': 'Operations', 'Finance Operations': 'Operations',
     'Strategy & Operations': 'Operations', 'Global Operations ': 'Operations',
     'Core Operations': 'Operations', 'Product Operations ': 'Operations',
     'R&D Operations': 'Operations', 'People/Office Operations': 'Operations',
-    'Operations ': 'Operations', 'Medical Operations': 'Operations',
+    'Operations ': 'Operations',
     'Client Operations': 'Operations', 'Central Operations': 'Operations',
     'Partner Ops': 'Operations', 'Operations & Analytics ': 'Operations',
     'Business Operations ': 'Operations', 'RevOps': 'Operations',
@@ -296,7 +297,95 @@ MAPPING = {
     # DESIGN
     'UX Design': 'Design', 'UX': 'Design', 'Design ': 'Design',
     'Creative': 'Design', 'Content Design': 'Design',
+
+    # CLINICAL (new category for healthcare delivery roles)
+    'General Cardiology': 'Clinical', 'Interventional Cardiology': 'Clinical',
+    'Clinical Operations': 'Clinical', 'Insurance Operations': 'Clinical',
+    'Medical Operations': 'Clinical',
+
+    # ── Additional mappings from unmapped dept analysis (2026-03-23) ──
+
+    # Waymo coded departments → Engineering
+    'Perception (7LT)': 'Engineering', 'Safety (7GB)': 'Engineering',
+    'CSI (7LV)': 'Engineering', 'FleetOps: Dev Rdns (7QI)': 'Engineering',
+    'Planner (7LU)': 'Engineering', 'AI Foundations (7SJ)': 'Engineering',
+    'Ops Center (9QB)': 'Engineering', 'RMC Direct Opex (78K)': 'Engineering',
+    'Pipeline (N/A)': 'Engineering',
+
+    # Anthropic departments
+    'AI Public Policy & Societal Impacts': 'Legal & Compliance',
+
+    # Straightforward mappings
+    'Channel Sales': 'Sales',
+    'Engagement': 'Marketing',
+    'Information Technology': 'IT',
+    'Client Success': 'Customer Success',
+    'Strategy and Operations': 'Operations',
+    'Global Investigations': 'Legal & Compliance',
+    'Creator': 'Marketing',
 }
+
+
+def enhanced_infer_function(title):
+    """Wrap the scraper's inference with additional patterns."""
+    if not isinstance(title, str):
+        return 'Unknown'
+    lower = title.lower()
+
+    # Clinical patterns (check first — these are specific)
+    clinical_kw = [
+        'counselor', 'therapist', 'clinician', 'nurse', 'physician',
+        'cardiology', 'cardiologist', 'medical director', 'psychiatr',
+        'substance use', 'behavioral health', 'clinical supervisor',
+        'pharmacy', 'pharmacist', 'dietitian', 'nutritionist',
+        'social worker', 'case manager', 'care coordinator',
+        'insurance advisor',
+    ]
+    if any(kw in lower for kw in clinical_kw):
+        return 'Clinical'
+
+    # Additional Engineering patterns
+    eng_kw = ['dba', 'devops', 'sre ', 'site reliability',
+              'tech lead', 'network technician', 'security researcher',
+              'security analyst', 'ml manager', 'machine learning']
+    if any(kw in lower for kw in eng_kw):
+        return 'Engineering'
+
+    # Additional Design patterns
+    if 'interior designer' in lower or 'graphic designer' in lower:
+        return 'Design'
+
+    # Additional Operations patterns
+    ops_kw = ['general affairs', 'purchasing manager', 'barista',
+              'merchandising', 'validation manager', 'regional manager',
+              'operations lead']
+    if any(kw in lower for kw in ops_kw):
+        return 'Operations'
+
+    # Additional Finance patterns
+    fin_kw = ['tax ', 'tax,', 'auditor', 'bookkeep', 'controller',
+              'accounts payable', 'accounts receivable', 'cpa', 'cfo']
+    if any(kw in lower for kw in fin_kw):
+        return 'Finance'
+
+    # Additional Sales patterns
+    if 'business manager - sales' in lower or 'project executive' in lower:
+        return 'Sales'
+
+    # Additional IT patterns
+    if 'it manager' in lower or 'it sox' in lower or 'idc network' in lower:
+        return 'IT'
+
+    # Additional Legal patterns
+    if 'aml ' in lower or 'kyc ' in lower or 'compliance' in lower:
+        return 'Legal & Compliance'
+
+    # Additional Customer Success
+    if 'customer hero' in lower or 'customer protection' in lower:
+        return 'Customer Success'
+
+    # Fall back to the scraper's inference
+    return infer_function_from_title(title)
 
 
 def normalize(func):
@@ -632,7 +721,7 @@ def main():
     df['Fixed'] = df['Function'].apply(normalize)
     needs = df['Fixed'].isna()
     print(f"Inferring from title for {needs.sum()} unmapped departments...")
-    df.loc[needs, 'Fixed'] = df.loc[needs, 'Title'].apply(infer_function_from_title)
+    df.loc[needs, 'Fixed'] = df.loc[needs, 'Title'].apply(enhanced_infer_function)
     unk = len(df[df['Fixed'] == 'Unknown'])
     print(f"After normalization: {unk} Unknown ({unk/len(df)*100:.1f}%)")
 
