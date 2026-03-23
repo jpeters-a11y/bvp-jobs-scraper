@@ -1,5 +1,6 @@
 import pandas as pd
 import re
+from collections import Counter
 from datetime import datetime, timezone
 import time
 import os
@@ -495,54 +496,97 @@ def create_weekly_snapshot(df, api):
 
 
 def update_talent_pooling(df, api):
+    """Cluster demand by Function + Level across the portfolio.
+
+    Instead of grouping by exact job title (which fragments the signal),
+    we cluster by Function + Level to answer: "How many portfolio companies
+    are hiring Senior Engineers right now?" Within each cluster we surface
+    the most common exact titles, companies, remote %, and roadmap
+    concentration so the talent team can act on the signal.
+    """
     print("\n" + "=" * 60)
-    print("STEP 5: Talent Pooling Opportunities")
+    print("STEP 5: Talent Pooling Opportunities (Function + Level clusters)")
     print("=" * 60)
 
     table = api.table(BASE_ID, TALENT_POOLING_TABLE)
     cleared = clear_table(table)
     print(f"  Cleared {cleared} old records")
 
-    opportunities = []
-    for title, group in df.groupby('Title'):
+    # Filter out Unknown function — not useful for talent pooling
+    pool_df = df[df['Fixed'] != 'Unknown'].copy()
+
+    clusters = []
+    for (func, level), group in pool_df.groupby(['Fixed', 'Level']):
         companies = sorted(set(group['Company']))
-        n = len(companies)
-        if n < 2:
+        n_companies = len(companies)
+
+        # Only include clusters with 3+ companies hiring
+        if n_companies < 3:
             continue
 
-        func_mode = group['Fixed'].mode()
-        func = str(func_mode.iloc[0]) if len(func_mode) > 0 else 'Unknown'
-        level_mode = group['Level'].mode()
-        level = str(level_mode.iloc[0]) if len(level_mode) > 0 else 'Unknown'
+        total_openings = len(group)
+        remote_count = len(group[group['Remote'] == 'Yes'])
+        remote_pct = remote_count / total_openings if total_openings > 0 else 0
 
-        priority = (
-            'High (5+ companies)' if n >= 5
-            else 'Medium (3-4 companies)' if n >= 3
-            else 'Low (2 companies)'
-        )
+        # Top 5 most common exact titles in this cluster
+        title_counts = group['Title'].value_counts()
+        sample_titles = []
+        for title, count in title_counts.head(5).items():
+            sample_titles.append(f"{title} ({count})")
 
-        opportunities.append({
-            'Job Title': str(title),
-            'Number of Companies': int(n),
-            'Total Openings': int(len(group)),
+        # Roadmap concentration: which roadmaps appear most in this cluster
+        roadmap_companies = [
+            ROADMAP_MAP[c] for c in companies if c in ROADMAP_MAP
+        ]
+        roadmap_summary = ''
+        if roadmap_companies:
+            rc = Counter(roadmap_companies).most_common(3)
+            roadmap_summary = ', '.join(f"{rm} ({ct})" for rm, ct in rc)
+
+        # Priority based on company count
+        if n_companies >= 15:
+            priority = 'Critical (15+ companies)'
+        elif n_companies >= 10:
+            priority = 'High (10-14 companies)'
+        elif n_companies >= 5:
+            priority = 'Medium (5-9 companies)'
+        else:
+            priority = 'Low (3-4 companies)'
+
+        # Role Cluster label: "Level Function" e.g. "Senior Engineering"
+        cluster_label = f"{level} {func}"
+
+        clusters.append({
+            'Job Title': cluster_label,
+            'Number of Companies': int(n_companies),
+            'Total Openings': int(total_openings),
             'Companies': ', '.join(companies),
-            'Function': func,
-            'Level': level,
+            'Function': str(func),
+            'Level': str(level),
             'Priority': priority,
-            'Last Updated': datetime.now(timezone.utc).isoformat()
+            'Last Updated': datetime.now(timezone.utc).isoformat(),
+            # New fields (require manual creation in Airtable)
+            'Sample Titles': '\n'.join(sample_titles),
+            'Remote Percentage': remote_pct,
+            'Top Roadmaps': roadmap_summary,
         })
 
-    opportunities.sort(key=lambda x: x['Number of Companies'], reverse=True)
+    # Sort: highest company count first
+    clusters.sort(key=lambda x: x['Number of Companies'], reverse=True)
 
+    # Upload
     uploaded = 0
-    for i in range(0, len(opportunities), 10):
-        table.batch_create(opportunities[i:i + 10])
-        uploaded += len(opportunities[i:i + 10])
-        if (i // 10 + 1) % 50 == 0:
-            print(f"  Uploaded {uploaded}/{len(opportunities)}...")
+    for i in range(0, len(clusters), 10):
+        table.batch_create(clusters[i:i + 10])
+        uploaded += len(clusters[i:i + 10])
         time.sleep(0.2)
 
-    print(f"✅ Created {len(opportunities)} talent pooling opportunities")
+    # Print highlights
+    print(f"\n  Top demand clusters:")
+    for c in clusters[:10]:
+        print(f"    {c['Job Title']}: {c['Number of Companies']} companies, {c['Total Openings']} openings")
+
+    print(f"\n✅ Created {len(clusters)} talent pooling clusters")
 
 
 # ── MAIN ────────────────────────────────────────────────────
