@@ -259,6 +259,9 @@ def analyze_jobs(jobs):
     
     return report, functions, levels, titles
 
+def _labels(job, key):
+    return "; ".join(x.get("label", "") if isinstance(x, dict) else str(x) for x in (job.get(key) or []))
+
 def create_dataframe(jobs, functions, levels):
     """Create a pandas DataFrame for further analysis"""
     df_data = []
@@ -299,7 +302,12 @@ def create_dataframe(jobs, functions, levels):
             "Level": level,
             "Location": location_name,
             "Remote": "Yes" if remote else ("Hybrid" if hybrid else "No"),
-            "URL": url
+            "URL": url,
+            "Job ID": job.get("jobId", ""),
+            "Dept (ATS)": (job.get("departments") or [""])[0],
+            "Consider Function": _labels(job, "jobFunctions"),
+            "Consider Job Types": _labels(job, "jobTypes"),
+            "Consider Seniority": _labels(job, "jobSeniorities"),
         })
     
     return pd.DataFrame(df_data)

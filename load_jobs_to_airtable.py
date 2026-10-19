@@ -11,6 +11,8 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 from bvp_jobs_analyzer import infer_function_from_title
 
+from classify import classify_function, classify_seniority, flags, is_junk
+
 BASE_ID = 'appKRyK4KfiGX9ojv'
 PERSONAL_ACCESS_TOKEN = os.environ.get('AIRTABLE_TOKEN', 'YOUR_AIRTABLE_PERSONAL_ACCESS_TOKEN')
 
@@ -425,8 +427,8 @@ def upload_jobs(df, api):
     print("=" * 60)
 
     table = api.table(BASE_ID, JOBS_TABLE)
-    cleared = clear_table(table)
-    print(f"  Cleared {cleared} old records")
+    old_ids = [r['id'] for r in table.all(fields=['Job Title'])]
+    print(f"  {len(old_ids)} existing records (deleted only after new upload succeeds)")
 
     print(f"Uploading {len(df)} jobs...")
     total_batches = (len(df) + 9) // 10
@@ -438,6 +440,14 @@ def upload_jobs(df, api):
                 'Company': str(row['Company']),
                 'Function': str(row['Fixed']),
                 'Level': str(row['Level']),
+                'Seniority': str(row['Seniority']),
+                'Head of': bool(row['Head of']),
+                'Manages People': bool(row['Manages People']),
+                'Forward Deployed': bool(row['Forward Deployed']),
+                'Dept (ATS)': str(row['Dept (ATS)']),
+                'Consider Function': str(row['Consider Function']),
+                'Consider Seniority': str(row['Consider Seniority']),
+                'Function Source': str(row['Function Source']),
                 'Location': str(row['Location']),
                 'Remote': str(row['Remote']),
                 'URL': str(row['URL']) if pd.notna(row['URL']) else '',
@@ -449,6 +459,8 @@ def upload_jobs(df, api):
             print(f"  Batch {batch_num}/{total_batches}")
         time.sleep(0.2)
 
+    table.batch_delete(old_ids)
+    print(f"  Deleted {len(old_ids)} previous records")
     print(f"✅ Jobs uploaded! ({len(df[df['Fixed'] == 'Unknown'])} Unknown)")
 
 
@@ -710,25 +722,42 @@ def main():
 
     # Filter: test/junk
     pre = len(df)
-    df = df[~df['Title'].apply(is_test_job)]
+    df = df[~df['Title'].apply(lambda t: is_test_job(t) or is_junk(str(t)))]
     n_test = pre - len(df)
     print(f"Test/junk postings: -{n_test}")
 
     total_filtered = n_co + n_lang + n_test
     print(f"\nAfter filtering: {len(df)} jobs ({total_filtered} removed, {total_filtered/raw*100:.1f}%)")
 
-    # Normalize functions
-    df['Fixed'] = df['Function'].apply(normalize)
-    needs = df['Fixed'].isna()
-    print(f"Inferring from title for {needs.sum()} unmapped departments...")
-    df.loc[needs, 'Fixed'] = df.loc[needs, 'Title'].apply(enhanced_infer_function)
-    unk = len(df[df['Fixed'] == 'Unknown'])
-    print(f"After normalization: {unk} Unknown ({unk/len(df)*100:.1f}%)")
+    # v2 classification (classify.py): title rules -> Consider -> dept mapping -> title inference
+    df['Title'] = df['Title'].fillna('').astype(str)
+    for col in ['Dept (ATS)', 'Consider Function', 'Consider Job Types', 'Consider Seniority']:
+        if col not in df.columns:
+            df[col] = ''
+        df[col] = df[col].fillna('').astype(str)
+    res = [classify_function(r['Title'], r['Dept (ATS)'], r['Consider Function'], r['Consider Job Types'],
+                             normalize, enhanced_infer_function) for _, r in df.iterrows()]
+    df['Fixed'] = [f for f, _ in res]
+    df['Function Source'] = [src for _, src in res]
+    df['Seniority'] = [classify_seniority(t, cs) for t, cs in zip(df['Title'], df['Consider Seniority'])]
+    fl = [flags(t, jt, sen) for t, jt, sen in zip(df['Title'], df['Consider Job Types'], df['Seniority'])]
+    for k in ['Head of', 'Manages People', 'Forward Deployed']:
+        df[k] = [d[k] for d in fl]
 
-    unmapped = df[(df['Function'] != 'Unknown') & (df['Fixed'] == 'Unknown')]
-    if len(unmapped) > 0:
-        print(f"\nUnmapped departments ({len(unmapped)} jobs):")
-        print(unmapped['Function'].value_counts().head(20))
+    unk = int((df['Fixed'] == 'Unknown').sum())
+    print(f"Function Unknown: {unk} ({unk/len(df)*100:.1f}%)")
+    print("Function source mix:\n" + df['Function Source'].value_counts().to_string())
+    print("Function distribution:\n" + df['Fixed'].value_counts().to_string())
+    print("Seniority:\n" + df['Seniority'].value_counts().to_string())
+    print(f"Head of: {int(df['Head of'].sum())} | Manages People: {int(df['Manages People'].sum())} "
+          f"| Forward Deployed: {int(df['Forward Deployed'].sum())}")
+    if unk:
+        print("Top Unknown depts:\n" + df[df['Fixed'] == 'Unknown']['Dept (ATS)']
+              .replace('', '(none)').value_counts().head(15).to_string())
+
+    if os.environ.get('DRY_RUN'):
+        print("\nDRY_RUN set - stopping before any Airtable writes.")
+        return
 
     # Capture previous week for velocity
     print("\nCapturing previous company totals for velocity tracking...")
