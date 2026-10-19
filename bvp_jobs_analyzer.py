@@ -1,26 +1,46 @@
-import requests
+import re
+import sys
 import json
 import time
 from collections import Counter
-import pandas as pd
-import re
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
-def create_session_with_retries():
-    """Create a requests session with retry logic"""
-    session = requests.Session()
-    retry = Retry(
-        total=5,
-        read=5,
-        connect=5,
-        backoff_factor=1,
-        status_forcelist=(500, 502, 504)
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    return session
+import pandas as pd
+import requests
+
+try:
+    import truststore; truststore.inject_into_ssl()   # corporate proxy fix (local only)
+except ImportError:
+    pass
+
+BASE = "https://jobs.bvp.com"
+API = f"{BASE}/api-boards/search-jobs"
+BOARD = {"id": "bessemer-ventures", "isParent": True}
+UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+CSRF_PATTERNS = [
+    r'<meta[^>]+name="csrf-token"[^>]+content="([^"]+)"',
+    r'"csrfToken"\s*:\s*"([^"]+)"',
+    r'"_csrf"\s*:\s*"([^"]+)"',
+    r'csrf[_-]?token["\']?\s*[:=]\s*["\']([A-Za-z0-9_\-]{20,})',
+]
+
+
+def _new_session():
+    """Load the board page to get a session cookie + CSRF token (Consider requires both)."""
+    s = requests.Session()
+    s.headers.update({"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
+    html = s.get(f"{BASE}/jobs", timeout=30).text
+    token = next((m.group(1) for p in CSRF_PATTERNS if (m := re.search(p, html, re.I))), None)
+    if not token:
+        sys.exit("FATAL: CSRF token not found on jobs.bvp.com; page structure changed")
+    s.headers.update({
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Origin": BASE,
+        "Referer": f"{BASE}/jobs",
+        "x-csrf-token": token,
+    })
+    return s
 
 def infer_function_from_title(title):
     """Infer function/department from job title when not provided"""
@@ -146,89 +166,42 @@ def infer_function_from_title(title):
     
     return "Unknown"
 
-def fetch_all_bvp_jobs():
-    """Fetch all jobs from BVP job board using pagination with retry logic"""
-    url = "https://jobs.bvp.com/api-boards/search-jobs"
-    all_jobs = []
-    sequence = None
-    page = 1
-    max_retries = 3
-    
-    # Create session with retry logic
-    session = create_session_with_retries()
-    
+def fetch_all_bvp_jobs(page_size=100, max_retries=3):
+    s, jobs, seq, total = _new_session(), [], None, None
     while True:
-        payload = {
-            "board": {
-                "id": "bessemer-ventures",
-                "isParent": True
-            },
-            "grouped": False,
-            "meta": {
-                "size": 100
-            },
-            "query": {
-                "promoteFeatured": True
-            }
-        }
-        
-        if sequence:
-            payload["meta"]["sequence"] = sequence
-        
-        print(f"Fetching page {page}...")
-        
-        # Try the request with retries
+        payload = {"meta": {"size": page_size}, "board": BOARD,
+                   "query": {"promoteFeatured": True}, "grouped": False}
+        if seq:
+            payload["meta"]["sequence"] = seq
         for attempt in range(max_retries):
             try:
-                response = session.post(url, json=payload, timeout=30)
-                
-                if response.status_code != 200:
-                    print(f"Error: {response.status_code}")
-                    if attempt < max_retries - 1:
-                        print(f"  Retrying... (attempt {attempt + 2}/{max_retries})")
-                        time.sleep(2 ** attempt)  # Exponential backoff
-                        continue
-                    else:
-                        break
-                
-                data = response.json()
-                
-                if "jobs" in data:
-                    jobs_data = data["jobs"]
-                    if isinstance(jobs_data, list):
-                        all_jobs.extend(jobs_data)
-                
-                print(f"  Fetched {len(all_jobs)} jobs so far (Total: {data.get('total', 'unknown')})")
-                
-                total = data.get('total', 0)
-                if len(all_jobs) >= total:
-                    print(f"  Reached total! Stopping.")
-                    return all_jobs
-                
-                if "meta" in data and "sequence" in data["meta"]:
-                    new_sequence = data["meta"]["sequence"]
-                    if new_sequence == sequence:
-                        print(f"  Sequence didn't change, stopping")
-                        return all_jobs
-                    sequence = new_sequence
-                    page += 1
-                    time.sleep(1)  # Increased delay to be nicer to the API
-                    break  # Success, exit retry loop
-                else:
-                    print(f"  No sequence found, stopping")
-                    return all_jobs
-                    
-            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-                print(f"  Connection error: {e}")
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    print(f"  Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"  Max retries reached. Continuing with {len(all_jobs)} jobs fetched so far.")
-                    return all_jobs
-    
-    return all_jobs
+                r = s.post(API, json=payload, timeout=30)
+                if r.status_code in (403, 412):        # token/session expired → refresh
+                    s = _new_session(); continue
+                r.raise_for_status()
+                data = r.json(); break
+            except requests.RequestException as e:
+                if attempt == max_retries - 1:
+                    sys.exit(f"FATAL: request failed after {max_retries} attempts: {e}")
+                time.sleep(2 ** attempt)
+        else:
+            sys.exit("FATAL: repeated 412/403 even after session refresh")
+
+        total = data.get("total", total)
+        for item in data.get("jobs", []):
+            if isinstance(item, dict) and "jobs" in item:
+                jobs.extend(item["jobs"])
+            elif isinstance(item, dict):
+                jobs.append(item)
+        print(f"  {len(jobs)}/{total}")
+        seq = (data.get("meta") or {}).get("sequence")
+        if not seq or (total and len(jobs) >= total):
+            break
+        time.sleep(1)
+
+    if not jobs or (total and len(jobs) < 0.8 * total):
+        sys.exit(f"FATAL: fetched {len(jobs)} of {total}; refusing to overwrite Airtable")
+    return jobs
 
 def analyze_jobs(jobs):
     """Analyze jobs by function and level"""
